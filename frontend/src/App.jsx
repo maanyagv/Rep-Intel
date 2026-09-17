@@ -167,7 +167,7 @@ export function isPersonProfile(item) {
   if (rolePhrases.some((rp) => text.includes(rp))) return true
 
   if ((title.includes(' | ') || title.includes(' - ')) &&
-      ['manager', 'director', 'counsel', 'lead', 'officer', 'vp', 'engineer', 'advocate', 'specialist', 'analyst'].some((r) => text.includes(r))) {
+    ['manager', 'director', 'counsel', 'lead', 'officer', 'vp', 'engineer', 'advocate', 'specialist', 'analyst'].some((r) => text.includes(r))) {
     if (source === 'linkedin' || text.includes('linkedin')) return true
   }
 
@@ -3870,13 +3870,13 @@ function CssPeriodDropdown({ value, onChange }) {
   const dropdownRef = useRef(null)
 
   const options = [
-    { value: '24h', label: 'Last 24 hours' },
-    { value: '7d', label: 'Last 7 days' },
-    { value: '30d', label: 'Last 30 days' },
-    { value: '3m', label: 'Last 3 months' },
-    { value: '6m', label: 'Last 6 months' },
-    { value: '1y', label: 'Last year' },
-    { value: 'all', label: 'All time' },
+    { value: '24h', label: 'Last 24 hours', shortLabel: '24 Hours' },
+    { value: '7d', label: 'Last 7 days', shortLabel: '7 Days' },
+    { value: '30d', label: 'Last 30 days', shortLabel: '30 Days' },
+    { value: '3m', label: 'Last 3 months', shortLabel: '3 Months' },
+    { value: '6m', label: 'Last 6 months', shortLabel: '6 Months' },
+    { value: '1y', label: 'Last year', shortLabel: '1 Year' },
+    { value: 'all', label: 'All time', shortLabel: 'All time' },
   ]
 
   const selectedOption = options.find((o) => o.value === value) || options[1]
@@ -3898,7 +3898,7 @@ function CssPeriodDropdown({ value, onChange }) {
         className={`css-dropdown-trigger ${isOpen ? 'active' : ''}`}
         onClick={() => setIsOpen(!isOpen)}
       >
-        <span>{selectedOption.label}</span>
+        <span>{selectedOption.shortLabel || selectedOption.label}</span>
         <ChevronDown size={14} className={`css-dropdown-chevron ${isOpen ? 'open' : ''}`} />
       </button>
 
@@ -4171,26 +4171,33 @@ function CustomerSatisfaction({
         <div className="css-title-block">
           <span className="css-kicker">RESIDENT & BUYER VOICE</span>
           <h3 className="css-card-title">
-            Customer Satisfaction Score (CSAT)
-            <div
-              className="css-info-wrapper"
-              onMouseEnter={() => setShowTooltip(true)}
-              onMouseLeave={() => setShowTooltip(false)}
-            >
-              <CircleHelp
-                size={14}
-                className="css-info-icon"
-                onClick={() => setShowTooltip(!showTooltip)}
-              />
-              {showTooltip && (
-                <div className="css-tooltip">
-                  Customer Satisfaction Score (CSAT) evaluates direct resident and homebuyer experiences (possession timelines, CRM response, build quality, amenities, complaints). Macro corporate finance and SEC/BSE filings are excluded.
-                  <br />
-                  <strong>Formula:</strong> ((Positive + Neutral × 0.5) /
-                  Customer Touchpoints) × 100
-                </div>
-              )}
-            </div>
+            <span className="css-title-main">Customer Satisfaction</span>{' '}
+            <span className="css-title-sub">
+              Score (CSAT)
+              <span
+                className="css-info-wrapper"
+                onMouseEnter={() => setShowTooltip(true)}
+                onMouseLeave={() => setShowTooltip(false)}
+              >
+                <CircleHelp
+                  size={14}
+                  className={`css-info-icon ${showTooltip ? 'active' : ''}`}
+                  onClick={() => setShowTooltip(!showTooltip)}
+                />
+                {showTooltip && (
+                  <div className="css-tooltip" role="tooltip">
+                    <div className="css-tooltip-arrow" />
+                    <p className="css-tooltip-desc">
+                      Customer Satisfaction Score (CSAT) evaluates direct resident and homebuyer experiences (possession timelines, CRM response, build quality, amenities, complaints). Macro corporate finance and SEC/BSE filings are excluded.
+                    </p>
+                    <div className="css-tooltip-formula">
+                      <span className="css-formula-label">Formula</span>
+                      <span className="css-formula-math">((Positive + Neutral × 0.5) / Customer Touchpoints) × 100</span>
+                    </div>
+                  </div>
+                )}
+              </span>
+            </span>
           </h3>
         </div>
 
@@ -4705,7 +4712,7 @@ function App() {
           if (metricsPayload) {
             localStorage.setItem('puravankara_cached_metrics', JSON.stringify(metricsPayload))
           }
-        } catch {}
+        } catch { }
 
         const backendFailed = responses.every(
           (response) =>
@@ -5116,9 +5123,10 @@ function App() {
             <div className="brand-core" />
           </div>
 
-          <div>
-            <strong>PURAVANKARA</strong>
-            <span>REPUTATION INTELLIGENCE</span>
+          <div className="brand-text">
+            <strong className="brand-title">REP.Tell!</strong>
+            <span className="brand-company">PURAVANKARA</span>
+            <span className="brand-sub">REPUTATION INTELLIGENCE</span>
           </div>
         </div>
 
@@ -5254,12 +5262,9 @@ function App() {
               {refreshing ? 'Collecting feed…' : 'Refresh full feed'}
             </button>
 
-            <div className="profile">
-              <div className="avatar">PR</div>
-              <div>
-                <strong>Reputation Team</strong>
-                <span>Puravankara</span>
-              </div>
+            <div className="profile" title="REP.Tell!">
+              <div className="avatar">RT</div>
+              <strong className="profile-title">REP.Tell!</strong>
             </div>
           </div>
         </header>
