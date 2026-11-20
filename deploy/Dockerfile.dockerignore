@@ -1,0 +1,53 @@
+# Build context filter for deploy/Dockerfile (BuildKit reads it because it is
+# named <Dockerfile>.dockerignore). The image needs only requirements.txt and
+# backend/ (code + the starting dataset in backend/data/).
+
+# Version control, CI and deploy tooling
+.git
+.github
+deploy
+.gitignore
+**/.DS_Store
+
+# Secrets and local settings (never in the image)
+.env
+.env*
+**/.env
+**/.env.*
+*.pem
+*.key
+
+# The website is published separately (Azure Static Web Apps)
+frontend
+
+# Dependencies and build output
+node_modules
+**/node_modules
+dist
+build
+.vite
+
+# Python virtual environments and caches (including committed ones)
+venv
+.venv
+env
+ENV
+**/venv
+**/.venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+
+# Local databases, logs, temporary files
+*.db
+*.sqlite
+*.sqlite3
+*.log
+**/*.log
+**/*.tmp
+
+# Not needed at run time: tests and the one-off database check script, docs
+tests
+**/tests
+backend/backend/test_db.py
+*.md

@@ -1,0 +1,186 @@
+# Website: build frontend/ (Vite + React) and publish it to Azure Static Web
+# Apps. Same no-secrets sign-in as the backend deploy (OIDC with the
+# <app>-github identity). The Static Web App's upload token is fetched at
+# deploy time with that sign-in and never stored.
+#
+# All values come from deploy/azure-deploy.conf (no GitHub variables or
+# secrets). Build settings are its WEB_ENV_<NAME> lines, passed to the build
+# as <NAME>. Until deploy/azure-frontend.sh has filled it in, this workflow
+# finishes quietly with a notice.
+name: Deploy website to Azure
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - "deploy/staticwebapp.config.json"
+      - "deploy/azure-deploy.conf"
+      - ".github/workflows/azure-frontend.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: azure-deploy-website
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Read deploy/azure-deploy.conf
+        id: conf
+        shell: bash
+        run: |
+          set -euo pipefail
+          conf=deploy/azure-deploy.conf
+          get() {
+            awk -v k="$1" '{ sub(/\r$/, "") } /^[ \t]*#/ { next } index($0, "=") == 0 { next }
+              { key = substr($0, 1, index($0, "=") - 1); gsub(/^[ \t]+|[ \t]+$/, "", key)
+                if (key == k) { v = substr($0, index($0, "=") + 1); gsub(/^[ \t]+|[ \t]+$/, "", v); val = v } }
+              END { print val }' "$conf"
+          }
+          app="$(get APP_NAME)"; sub="$(get AZURE_SUBSCRIPTION_ID)"; tenant="$(get AZURE_TENANT_ID)"
+          client="$(get AZURE_CLIENT_ID)"; swa="$(get STATIC_WEB_APP_NAME)"
+
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "::notice::Deploys run only from main (this is ${GITHUB_REF}); skipping."
+            echo "ready=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          missing=""
+          for k in app sub tenant client swa; do [ -n "${!k}" ] || missing="$missing $k"; done
+          if [ -n "$missing" ]; then
+            echo "::notice::The website isn't set up in Azure yet (empty in $conf:$missing). Run deploy/azure.sh, deploy/github-setup.sh and deploy/azure-frontend.sh (see deploy/AZURE.md). Skipping."
+            echo "ready=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          guid='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+          echo "$app" | grep -Eq '^[a-z][a-z0-9-]{0,31}$' || { echo "::error::bad APP_NAME"; exit 1; }
+          echo "$swa" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9-]{0,58}$' || { echo "::error::bad STATIC_WEB_APP_NAME"; exit 1; }
+          for v in "$sub" "$tenant" "$client"; do echo "$v" | grep -Eq "$guid" || { echo "::error::bad ID in $conf"; exit 1; }; done
+
+          # Website build settings: WEB_ENV_<NAME>=value -> <NAME>=value.
+          # Public values only (they end up in the browser's JavaScript).
+          : > "$RUNNER_TEMP/web-env"
+          awk '{ sub(/\r$/, "") } /^[ \t]*WEB_ENV_[A-Za-z0-9_]+=/ { sub(/^[ \t]*WEB_ENV_/, ""); print }' "$conf" > "$RUNNER_TEMP/web-env.raw"
+          while IFS= read -r line; do
+            name="${line%%=*}"; val="${line#*=}"
+            printf '%s\n' "$name" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]*$' || { echo "::error::bad WEB_ENV_ name in $conf"; exit 1; }
+            printf '%s=%s\n' "$name" "$val" >> "$RUNNER_TEMP/web-env"
+          done < "$RUNNER_TEMP/web-env.raw"
+          api="$(grep -m1 '^VITE_API_URL=' "$RUNNER_TEMP/web-env" | cut -d= -f2- || true)"
+          case "$api" in
+            https://*) ;;
+            *) echo "::error::WEB_ENV_VITE_API_URL in $conf is empty or not https://. deploy/azure-frontend.sh fills it from BACKEND_URL (see deploy/AZURE.md); without it the website can't reach the backend."
+               exit 1 ;;
+          esac
+
+          {
+            echo "ready=true"
+            echo "app=$app"
+            echo "sub=$sub"
+            echo "tenant=$tenant"
+            echo "client=$client"
+            echo "swa=$swa"
+            echo "api=${api%/}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node
+        if: steps.conf.outputs.ready == 'true'
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build website
+        if: steps.conf.outputs.ready == 'true'
+        working-directory: frontend
+        env:
+          API: ${{ steps.conf.outputs.api }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r line; do export "$line"; done < "$RUNNER_TEMP/web-env"
+          npm ci
+          npm run build
+          # frontend/src/App.jsx has the backend address written in as
+          # 'http://127.0.0.1:8000' (it doesn't read VITE_API_URL yet). Point the
+          # built files at the Azure backend instead. Finds nothing once the
+          # code reads import.meta.env.VITE_API_URL.
+          n=0
+          for f in $(grep -rlF 'http://127.0.0.1:8000' dist || true); do
+            sed -i "s#http://127\.0\.0\.1:8000#${API}#g" "$f"; n=$((n + 1))
+          done
+          echo "pointed $n built file(s) at $API"
+          if grep -rqF 'http://127.0.0.1:8000' dist; then echo "::error::the built site still calls http://127.0.0.1:8000"; exit 1; fi
+          grep -rqF "$API" dist/assets || { echo "::error::the built site doesn't contain the backend address $API"; exit 1; }
+          # Routing for a single-page app (deep links serve index.html; missing
+          # /assets files stay 404; cache headers).
+          cp ../deploy/staticwebapp.config.json dist/
+
+      - name: Sign in to Azure (OIDC, no stored secret)
+        if: steps.conf.outputs.ready == 'true'
+        uses: azure/login@v3
+        with:
+          client-id: ${{ steps.conf.outputs.client }}
+          tenant-id: ${{ steps.conf.outputs.tenant }}
+          subscription-id: ${{ steps.conf.outputs.sub }}
+
+      - name: Get upload token
+        if: steps.conf.outputs.ready == 'true'
+        id: token
+        env:
+          APP: ${{ steps.conf.outputs.app }}
+          SWA: ${{ steps.conf.outputs.swa }}
+        run: |
+          token="$(az staticwebapp secrets list --name "$SWA" --resource-group "$APP" --query properties.apiKey -o tsv)"
+          if [ -z "$token" ]; then echo "::error::could not read the upload token of $SWA"; exit 1; fi
+          echo "::add-mask::$token"
+          echo "value=$token" >> "$GITHUB_OUTPUT"
+
+      - name: Upload website
+        if: steps.conf.outputs.ready == 'true'
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ steps.token.outputs.value }}
+          action: upload
+          app_location: frontend/dist
+          skip_app_build: true
+          skip_api_build: true
+
+      - name: Check the live site (up to 5 minutes)
+        if: steps.conf.outputs.ready == 'true'
+        env:
+          APP: ${{ steps.conf.outputs.app }}
+          SWA: ${{ steps.conf.outputs.swa }}
+          API: ${{ steps.conf.outputs.api }}
+        run: |
+          set -uo pipefail
+          host="$(az staticwebapp show --name "$SWA" --resource-group "$APP" --query defaultHostname -o tsv)"
+          site="https://$host"
+          want="$(grep -oE '/assets/index-[^"]+\.js' frontend/dist/index.html | head -1)"
+          [ -n "$want" ] || { echo "::error::no /assets/index-*.js in the built index.html"; exit 1; }
+          deadline=$((SECONDS + 300))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            # The new build is live once its main script name is in the served page.
+            if curl -fsS --max-time 15 "$site/" | grep -qF "$want"; then
+              curl -fsS --max-time 15 "$site/overview/some/deep/link" | grep -qF "$want" \
+                || { echo "::error::a deep link ($site/overview/some/deep/link) does not serve the app"; exit 1; }
+              curl -fsS --max-time 15 "$site$want" | grep -qF "$API" \
+                || { echo "::error::the live site's JavaScript doesn't contain $API"; exit 1; }
+              code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$site/assets/does-not-exist-0000.js")"
+              [ "$code" = 404 ] || { echo "::error::a missing /assets file returned $code, not 404"; exit 1; }
+              echo "Live: $site (backend $API)"
+              echo "### Website deployed to $site (backend $API)" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "waiting for the new version at $site ..."
+            sleep 10
+          done
+          echo "::error::$site did not serve the new build within 5 minutes"
+          exit 1

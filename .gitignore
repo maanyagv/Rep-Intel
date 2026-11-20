@@ -33,3 +33,7 @@ Thumbs.db
 *.log
 *.sqlite
 *.sqlite3
+
+# Azure deploy settings (secrets; see deploy/AZURE.md)
+.env.azure
+.env.azure.bak
