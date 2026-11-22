@@ -165,13 +165,18 @@ jobs:
           site="https://$host"
           want="$(grep -oE '/assets/index-[^"]+\.js' frontend/dist/index.html | head -1)"
           [ -n "$want" ] || { echo "::error::no /assets/index-*.js in the built index.html"; exit 1; }
+          # fetch URL: download to a file, then search it. (Piping curl into
+          # "grep -q" fails under pipefail: grep stops at the first match and
+          # curl then reports error 23 for the unread rest.)
+          page="$RUNNER_TEMP/live-page"
+          fetch() { curl -fsS --max-time 15 -o "$page" "$1"; }
           deadline=$((SECONDS + 300))
           while [ "$SECONDS" -lt "$deadline" ]; do
             # The new build is live once its main script name is in the served page.
-            if curl -fsS --max-time 15 "$site/" | grep -qF "$want"; then
-              curl -fsS --max-time 15 "$site/overview/some/deep/link" | grep -qF "$want" \
+            if fetch "$site/" && grep -qF "$want" "$page"; then
+              { fetch "$site/overview/some/deep/link" && grep -qF "$want" "$page"; } \
                 || { echo "::error::a deep link ($site/overview/some/deep/link) does not serve the app"; exit 1; }
-              curl -fsS --max-time 15 "$site$want" | grep -qF "$API" \
+              { fetch "$site$want" && grep -qF "$API" "$page"; } \
                 || { echo "::error::the live site's JavaScript doesn't contain $API"; exit 1; }
               code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$site/assets/does-not-exist-0000.js")"
               [ "$code" = 404 ] || { echo "::error::a missing /assets file returned $code, not 404"; exit 1; }
