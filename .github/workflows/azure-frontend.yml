@@ -1,12 +1,7 @@
-# Website: build frontend/ (Vite + React) and publish it to Azure Static Web
-# Apps. Same no-secrets sign-in as the backend deploy (OIDC with the
-# <app>-github identity). The Static Web App's upload token is fetched at
-# deploy time with that sign-in and never stored.
-#
-# All values come from deploy/azure-deploy.conf (no GitHub variables or
-# secrets). Build settings are its WEB_ENV_<NAME> lines, passed to the build
-# as <NAME>. Until deploy/azure-frontend.sh has filled it in, this workflow
-# finishes quietly with a notice.
+# Website: builds frontend/ and publishes it to the Azure Static Web App
+# `rep-tell-web`. Signs in with OIDC as the rep-tell-github identity, which may only read
+# that Static Web App's upload token (fetched at run time, never stored).
+# Settings: deploy/azure-deploy.conf (STATIC_WEB_APP_NAME and WEB_ENV_* build values).
 name: Deploy website to Azure
 
 on:
@@ -56,7 +51,7 @@ jobs:
           missing=""
           for k in app sub tenant client swa; do [ -n "${!k}" ] || missing="$missing $k"; done
           if [ -n "$missing" ]; then
-            echo "::notice::The website isn't set up in Azure yet (empty in $conf:$missing). Run deploy/azure.sh, deploy/github-setup.sh and deploy/azure-frontend.sh (see deploy/AZURE.md). Skipping."
+            echo "::notice::The website isn't set up in Azure yet (empty in $conf:$missing). Ask the Azure platform owner (see deploy/AZURE.md). Skipping."
             echo "ready=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
           guid='^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
@@ -76,7 +71,7 @@ jobs:
           api="$(grep -m1 '^VITE_API_URL=' "$RUNNER_TEMP/web-env" | cut -d= -f2- || true)"
           case "$api" in
             https://*) ;;
-            *) echo "::error::WEB_ENV_VITE_API_URL in $conf is empty or not https://. deploy/azure-frontend.sh fills it from BACKEND_URL (see deploy/AZURE.md); without it the website can't reach the backend."
+            *) echo "::error::WEB_ENV_VITE_API_URL in $conf is empty or not https://. It must be the backend's https:// address; without it the website can't reach the backend."
                exit 1 ;;
           esac
 
